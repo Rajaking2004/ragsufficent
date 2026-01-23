@@ -63,17 +63,11 @@ class GeneratorConfig:
     max_tokens: int = 512
     
     # System prompts for each state
-    abstention_prompt: str = """You are a helpful assistant. The provided documents do not contain sufficient information to answer the question reliably.
+    abstention_prompt: str = """The documents do not contain the answer. Reply with exactly: "I cannot find the answer in the provided documents." """
 
-State clearly that the provided documents do not contain the answer. Do NOT attempt to answer from your own knowledge. Be honest about the limitation."""
+    hedging_prompt: str = """Answer using ONLY the documents. Be brief - just the key words/phrase. Use hedging like "possibly" or "likely". One line max."""
 
-    hedging_prompt: str = """You are a helpful assistant. The provided documents contain some relevant information, but there may be gaps or ambiguities.
-
-Answer the question based on the documents, but use uncertainty markers like "The text suggests", "It appears that", "Based on the available information". Do not be definitive. Acknowledge any limitations in the provided context."""
-
-    standard_prompt: str = """You are a helpful assistant. The provided documents contain sufficient information to answer the question definitively.
-
-Answer the question based on the documents. Be clear, accurate, and confident in your response."""
+    standard_prompt: str = """Answer using ONLY the documents. Give ONLY the answer - just the name, date, number, or phrase. No explanation. No sentences. Just the answer itself."""
 
 
 @dataclass

@@ -49,36 +49,35 @@ logger = logging.getLogger(__name__)
 
 
 # Sufficiency prompt template - asks LLM to judge if context is sufficient
-SUFFICIENCY_PROMPT_TEMPLATE = """You are an expert evaluator. Your task is to determine if the provided context contains sufficient information to answer the given question.
-
-### QUESTION
+SUFFICIENCY_PROMPT_TEMPLATE = """### QUESTION
 {question}
 
 ### CONTEXT
 {context}
 
 ### TASK
-Based ONLY on the provided context, can the question be definitively answered?
-- Answer "Yes" if the context contains all necessary information to answer the question completely and accurately.
-- Answer "No" if the context is missing information, is ambiguous, or would require external knowledge.
+Does the context contain information that answers the question?
 
-Your response must be exactly one word: Yes or No"""
+Think briefly:
+1. What does the question ask for?
+2. Is that information in the context?
+
+If the answer or relevant information is in the context, say Yes.
+If the context has nothing relevant, say No.
+
+Answer (Yes/No):"""
 
 
 # Alternative prompt with more nuance
-SUFFICIENCY_PROMPT_V2 = """Evaluate whether the following context is sufficient to answer the question.
+SUFFICIENCY_PROMPT_V2 = """Question: {question}
 
-Question: {question}
+Context: {context}
 
-Context:
-{context}
+Can this question be answered using the context above?
+- Yes = the context contains the answer
+- No = the context has no relevant information
 
-Criteria for sufficiency:
-1. All facts needed to answer are explicitly stated in the context
-2. No external knowledge or inference beyond the context is required
-3. The answer can be definitively determined (not ambiguous)
-
-Is the context sufficient? Answer with exactly one word: Yes or No"""
+Answer:"""
 
 
 @dataclass
@@ -405,11 +404,13 @@ class ProbabilisticSufficiencyScorer:
         """
         Extract probabilities using Groq API.
         Groq provides fast inference with Llama/Mixtral models.
+        
+        Uses single-call approach with confidence keywords for efficiency.
         """
         prompt = self._build_prompt(question, context)
         
         try:
-            # First get the main response
+            # Single API call - use deterministic response
             response = self.client.chat.completions.create(
                 model=self.config.model_name,
                 messages=[
@@ -423,56 +424,26 @@ class ProbabilisticSufficiencyScorer:
             response_text = response.choices[0].message.content.strip()
             response_lower = response_text.lower()
             
-            # Groq doesn't provide logprobs, so estimate via sampling
+            # Single-call scoring: assign confidence based on response
+            # High confidence for clear Yes/No, lower for ambiguous
             if response_lower.startswith("yes"):
-                # Sample to estimate confidence
-                yes_count = 1  # Already got one yes
-                n_samples = 3
-                
-                for _ in range(n_samples):
-                    try:
-                        sample = self.client.chat.completions.create(
-                            model=self.config.model_name,
-                            messages=[
-                                {"role": "system", "content": "Answer only Yes or No."},
-                                {"role": "user", "content": prompt}
-                            ],
-                            temperature=0.3,
-                            max_tokens=5
-                        )
-                        if sample.choices[0].message.content.strip().lower().startswith("yes"):
-                            yes_count += 1
-                    except:
-                        pass
-                
-                confidence = yes_count / (n_samples + 1)
-                logprob_yes = math.log(max(confidence, 0.05))
-                logprob_no = math.log(max(1 - confidence, 0.05))
-                
+                # Strong Yes -> high confidence
+                logprob_yes = math.log(0.85)  # ~85% confident
+                logprob_no = math.log(0.15)
             elif response_lower.startswith("no"):
-                no_count = 1
-                n_samples = 3
-                
-                for _ in range(n_samples):
-                    try:
-                        sample = self.client.chat.completions.create(
-                            model=self.config.model_name,
-                            messages=[
-                                {"role": "system", "content": "Answer only Yes or No."},
-                                {"role": "user", "content": prompt}
-                            ],
-                            temperature=0.3,
-                            max_tokens=5
-                        )
-                        if sample.choices[0].message.content.strip().lower().startswith("no"):
-                            no_count += 1
-                    except:
-                        pass
-                
-                confidence = no_count / (n_samples + 1)
-                logprob_no = math.log(max(confidence, 0.05))
-                logprob_yes = math.log(max(1 - confidence, 0.05))
+                # Strong No -> high confidence  
+                logprob_no = math.log(0.85)
+                logprob_yes = math.log(0.15)
+            elif "yes" in response_lower:
+                # Weak yes signal
+                logprob_yes = math.log(0.65)
+                logprob_no = math.log(0.35)
+            elif "no" in response_lower:
+                # Weak no signal
+                logprob_no = math.log(0.65)
+                logprob_yes = math.log(0.35)
             else:
+                # Ambiguous - neutral score
                 logprob_yes = math.log(0.5)
                 logprob_no = math.log(0.5)
             
