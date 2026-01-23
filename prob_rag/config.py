@@ -108,6 +108,7 @@ class ProbRAGConfig:
     openai_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
     gemini_api_key: Optional[str] = None
+    groq_api_key: Optional[str] = None
     
     # General settings
     seed: int = 42
@@ -128,6 +129,8 @@ class ProbRAGConfig:
             self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
         if self.gemini_api_key is None:
             self.gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if self.groq_api_key is None:
+            self.groq_api_key = os.getenv("GROQ_API_KEY")
     
     @classmethod
     def from_json(cls, path: str) -> "ProbRAGConfig":
@@ -194,9 +197,19 @@ class ProbRAGConfig:
         
         # Check API keys for cloud models only if required
         if require_api_keys:
-            if any(m in self.scorer.model_name.lower() for m in ["gpt"]):
+            model_lower = self.scorer.model_name.lower()
+            if any(m in model_lower for m in ["gpt"]):
                 if not self.openai_api_key:
                     errors.append("OpenAI API key required for GPT models")
+            elif any(m in model_lower for m in ["llama", "mixtral", "gemma"]):
+                if not self.groq_api_key:
+                    errors.append("Groq API key required for Llama/Mixtral/Gemma models")
+            elif "gemini" in model_lower:
+                if not self.gemini_api_key:
+                    errors.append("Gemini API key required for Gemini models")
+            elif "claude" in model_lower:
+                if not self.anthropic_api_key:
+                    errors.append("Anthropic API key required for Claude models")
         
         if errors:
             for e in errors:

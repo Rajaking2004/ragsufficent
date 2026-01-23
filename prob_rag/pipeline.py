@@ -181,6 +181,8 @@ class ProbRAGPipeline:
             api_key = self.config.gemini_api_key
         elif "claude" in model_name:
             api_key = self.config.anthropic_api_key
+        elif "llama" in model_name or "mixtral" in model_name or "gemma" in model_name:
+            api_key = self.config.groq_api_key
         else:
             api_key = self.config.openai_api_key
         
@@ -200,6 +202,8 @@ class ProbRAGPipeline:
             gen_api_key = self.config.gemini_api_key
         elif "claude" in gen_model:
             gen_api_key = self.config.anthropic_api_key
+        elif "llama" in gen_model or "mixtral" in gen_model or "gemma" in gen_model:
+            gen_api_key = self.config.groq_api_key
         else:
             gen_api_key = self.config.openai_api_key
         

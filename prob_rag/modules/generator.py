@@ -29,6 +29,11 @@ try:
 except ImportError:
     genai = None
 
+try:
+    from groq import Groq
+except ImportError:
+    Groq = None
+
 from ..config import GeneratorConfig, RouterState
 from .router import RoutingDecision
 
@@ -173,6 +178,15 @@ class AdaptiveGenerator:
             genai.configure(api_key=self.api_key)
             self.client = genai.GenerativeModel(self.config.model_name)
             self.provider = "gemini"
+        
+        elif "llama" in model_lower or "mixtral" in model_lower or "gemma" in model_lower:
+            # Groq models (Llama, Mixtral, Gemma)
+            if Groq is None:
+                raise ImportError("groq package required. Install with: pip install groq")
+            if not self.api_key:
+                raise ValueError("Groq API key required for Llama/Mixtral models")
+            self.client = Groq(api_key=self.api_key)
+            self.provider = "groq"
             
         else:
             logger.warning(f"Unknown model {self.config.model_name}, assuming OpenAI-compatible")
@@ -269,6 +283,28 @@ class AdaptiveGenerator:
         
         return answer, prompt_tokens, completion_tokens
     
+    def _generate_groq(
+        self,
+        system_prompt: str,
+        user_prompt: str
+    ) -> tuple:
+        """Generate response using Groq API (Llama/Mixtral models)."""
+        response = self.client.chat.completions.create(
+            model=self.config.model_name,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=self.config.temperature,
+            max_tokens=self.config.max_tokens
+        )
+        
+        answer = response.choices[0].message.content.strip()
+        prompt_tokens = response.usage.prompt_tokens if response.usage else None
+        completion_tokens = response.usage.completion_tokens if response.usage else None
+        
+        return answer, prompt_tokens, completion_tokens
+    
     def generate(
         self,
         question: str,
@@ -305,6 +341,9 @@ class AdaptiveGenerator:
             elif self.provider == "gemini":
                 answer, prompt_tokens, completion_tokens = \
                     self._generate_gemini(system_prompt, user_prompt)
+            elif self.provider == "groq":
+                answer, prompt_tokens, completion_tokens = \
+                    self._generate_groq(system_prompt, user_prompt)
             else:
                 raise ValueError(f"Unknown provider: {self.provider}")
                 

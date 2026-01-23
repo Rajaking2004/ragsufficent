@@ -37,6 +37,11 @@ try:
 except ImportError:
     genai = None
 
+try:
+    from groq import Groq
+except ImportError:
+    Groq = None
+
 from ..config import ScorerConfig
 
 
@@ -160,6 +165,15 @@ class ProbabilisticSufficiencyScorer:
             genai.configure(api_key=self.api_key)
             self.client = genai.GenerativeModel(self.config.model_name)
             self.provider = "gemini"
+        
+        elif "llama" in model_lower or "mixtral" in model_lower or "gemma" in model_lower:
+            # Groq models
+            if Groq is None:
+                raise ImportError("groq package required. Install with: pip install groq")
+            if not self.api_key:
+                raise ValueError("Groq API key required for Llama/Mixtral models")
+            self.client = Groq(api_key=self.api_key)
+            self.provider = "groq"
             
         else:
             # Assume OpenAI-compatible API
@@ -382,6 +396,91 @@ class ProbabilisticSufficiencyScorer:
         except Exception as e:
             logger.error(f"Gemini API error: {e}")
             raise
+
+    def _extract_logprobs_groq(
+        self,
+        question: str,
+        context: str
+    ) -> Tuple[Optional[float], Optional[float], str, List[Dict]]:
+        """
+        Extract probabilities using Groq API.
+        Groq provides fast inference with Llama/Mixtral models.
+        """
+        prompt = self._build_prompt(question, context)
+        
+        try:
+            # First get the main response
+            response = self.client.chat.completions.create(
+                model=self.config.model_name,
+                messages=[
+                    {"role": "system", "content": "You are a precise evaluator. Answer only Yes or No."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.0,
+                max_tokens=5
+            )
+            
+            response_text = response.choices[0].message.content.strip()
+            response_lower = response_text.lower()
+            
+            # Groq doesn't provide logprobs, so estimate via sampling
+            if response_lower.startswith("yes"):
+                # Sample to estimate confidence
+                yes_count = 1  # Already got one yes
+                n_samples = 3
+                
+                for _ in range(n_samples):
+                    try:
+                        sample = self.client.chat.completions.create(
+                            model=self.config.model_name,
+                            messages=[
+                                {"role": "system", "content": "Answer only Yes or No."},
+                                {"role": "user", "content": prompt}
+                            ],
+                            temperature=0.3,
+                            max_tokens=5
+                        )
+                        if sample.choices[0].message.content.strip().lower().startswith("yes"):
+                            yes_count += 1
+                    except:
+                        pass
+                
+                confidence = yes_count / (n_samples + 1)
+                logprob_yes = math.log(max(confidence, 0.05))
+                logprob_no = math.log(max(1 - confidence, 0.05))
+                
+            elif response_lower.startswith("no"):
+                no_count = 1
+                n_samples = 3
+                
+                for _ in range(n_samples):
+                    try:
+                        sample = self.client.chat.completions.create(
+                            model=self.config.model_name,
+                            messages=[
+                                {"role": "system", "content": "Answer only Yes or No."},
+                                {"role": "user", "content": prompt}
+                            ],
+                            temperature=0.3,
+                            max_tokens=5
+                        )
+                        if sample.choices[0].message.content.strip().lower().startswith("no"):
+                            no_count += 1
+                    except:
+                        pass
+                
+                confidence = no_count / (n_samples + 1)
+                logprob_no = math.log(max(confidence, 0.05))
+                logprob_yes = math.log(max(1 - confidence, 0.05))
+            else:
+                logprob_yes = math.log(0.5)
+                logprob_no = math.log(0.5)
+            
+            return logprob_yes, logprob_no, response_text, []
+            
+        except Exception as e:
+            logger.error(f"Groq API error: {e}")
+            raise
     
     def _compute_score(
         self,
@@ -455,6 +554,9 @@ class ProbabilisticSufficiencyScorer:
         elif self.provider == "gemini":
             logprob_yes, logprob_no, response_text, top_tokens = \
                 self._extract_logprobs_gemini(question, context)
+        elif self.provider == "groq":
+            logprob_yes, logprob_no, response_text, top_tokens = \
+                self._extract_logprobs_groq(question, context)
         else:
             raise ValueError(f"Unknown provider: {self.provider}")
         
