@@ -55,8 +55,10 @@ Thumbs.db
 *.onnx
 
 # Datasets - DO NOT UPLOAD (40GB+)
-data/
-datasets/
+# Note: prob_rag/data/ contains code, not datasets
+/data/
+/datasets/
+data_cache/
 *.parquet
 *.arrow
 *.cache
